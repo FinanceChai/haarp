@@ -209,9 +209,11 @@ class WeatherBot:
     def _config_summary(self) -> str:
         c = self.config
         return (
+            f"Strategy:         Simmer (point forecast → bucket match)\n"
             f"Entry threshold:  {c.entry_threshold:.0%}\n"
             f"Exit threshold:   {c.exit_threshold:.0%}\n"
-            f"Min edge:         {c.min_edge:.0%}\n"
+            f"Flat NOAA prob:   {c.noaa_flat_probability:.0%}\n"
+            f"Min shares/order: {c.min_shares_per_order}\n"
             f"Max position:     ${c.max_position_usd:.2f}\n"
             f"Max exposure:     ${c.max_total_exposure:.2f}\n"
             f"Locations:        {', '.join(c.locations)}\n"
@@ -269,7 +271,7 @@ Examples:
     parser.add_argument("--max-position", type=float, default=2.0, help="Max $ per position")
     parser.add_argument("--entry-threshold", type=float, default=0.15, help="Entry threshold (0-1)")
     parser.add_argument("--exit-threshold", type=float, default=0.45, help="Exit threshold (0-1)")
-    parser.add_argument("--min-edge", type=float, default=0.20, help="Minimum edge to trade (0-1)")
+    parser.add_argument("--noaa-prob", type=float, default=0.85, help="Flat probability for matching bucket (0-1)")
 
     args = parser.parse_args()
 
@@ -282,7 +284,7 @@ Examples:
         max_position_usd=args.max_position,
         entry_threshold=args.entry_threshold,
         exit_threshold=args.exit_threshold,
-        min_edge=args.min_edge,
+        noaa_flat_probability=args.noaa_prob,
     )
     if args.cities:
         config.locations = [c.strip() for c in args.cities.split(",")]

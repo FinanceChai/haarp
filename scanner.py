@@ -1,14 +1,16 @@
 """
-Weather Market Scanner
-=======================
+Weather Market Scanner (Simmer-style)
+======================================
 The core engine that:
-  1. Fetches NOAA forecasts for configured cities
+  1. Fetches NOAA/Open-Meteo point forecasts for configured cities
   2. Fetches Polymarket weather bucket prices
-  3. Compares forecast probability vs market price
-  4. Generates trade signals when edge exceeds threshold
-  5. Applies safeguards (slippage, flip-flop, time decay)
+  3. Matches point forecast to the containing bucket
+  4. Assigns flat probability (0.85) to the matching bucket
+  5. Buys if matching bucket is priced below entry threshold
+  6. Applies safeguards (slippage, flip-flop, time decay, Polymarket minimums)
 
-This is the "brain" of the bot — it decides WHAT to trade and WHY.
+Key difference from Gaussian approach: no per-bucket probability math.
+Just: "NOAA says X°F → find bucket containing X → if price < 15¢, buy it."
 """
 
 import logging
@@ -17,7 +19,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 from config import TradingConfig, US_CITIES
-from noaa_client import NOAAClient, DailyForecast
+from noaa_client import DailyForecast
 from open_meteo_client import OpenMeteoClient
 from polymarket_client import PolymarketClient, WeatherBucket, TradeSignal
 
@@ -152,16 +154,22 @@ class WeatherScanner:
                 scan_duration_ms=(_time.time() - start) * 1000,
             )
 
-        # ── Step 3: Match and analyze ──
-        # Log available forecast dates for debugging
+        # ── Step 3: Match point forecast to bucket (Simmer-style) ──
+        # No Gaussian distribution — just find the bucket containing the forecast temp
         for city, flist in forecasts.items():
-            logger.debug(f"  NOAA dates for {city}: {[f.date for f in flist]}")
+            logger.debug(f"  Forecast dates for {city}: {[f.date for f in flist]}")
 
         seen_bucket_dates = set()
         for bucket in buckets:
             city_forecasts = forecasts.get(bucket.city, [])
             if not city_forecasts:
                 logger.debug(f"  No forecasts for city: {bucket.city}")
+                continue
+
+            # ── Hard constraint: Polymarket tick size ──
+            market_price = bucket.yes_price
+            if market_price < self.config.min_tick_size or market_price > (1.0 - self.config.min_tick_size):
+                logger.debug(f"  Skip {bucket.city} {bucket.date} [{bucket.bucket_low_f}-{bucket.bucket_high_f}F]: price {market_price:.2f} at extreme")
                 continue
 
             # Find matching date forecast
@@ -178,7 +186,7 @@ class WeatherScanner:
                     avail = [f.date for f in city_forecasts]
                     logger.debug(
                         f"  No date match: {bucket.city} bucket={bucket.date!r} "
-                        f"vs NOAA={avail}"
+                        f"vs forecast={avail}"
                     )
                 continue
 
@@ -188,23 +196,28 @@ class WeatherScanner:
                 else matching_forecast.low_f
             )
 
-            # Estimate probability that actual temp falls in this bucket
-            noaa_prob = NOAAClient.estimate_bucket_probability(
-                forecast_temp_f=forecast_temp,
-                hourly_temps_f=matching_forecast.hourly_temps_f,
-                bucket_low_f=bucket.bucket_low_f,
-                bucket_high_f=bucket.bucket_high_f,
-            )
+            # Simmer-style: does the point forecast fall in this bucket?
+            temp_in_bucket = bucket.bucket_low_f <= forecast_temp <= bucket.bucket_high_f
 
-            # Calculate edge
-            market_price = bucket.yes_price
+            # Flat probability: 0.85 if forecast is in bucket, 0.0 otherwise
+            noaa_prob = self.config.noaa_flat_probability if temp_in_bucket else 0.0
+
             edge = noaa_prob - market_price
 
             logger.debug(
                 f"  {bucket.city} {bucket.date} [{bucket.bucket_low_f}-{bucket.bucket_high_f}F] "
-                f"| NOAA: {noaa_prob:.1%} vs Market: {market_price:.1%} | Edge: {edge:.1%} "
-                f"| Forecast: {forecast_temp}F"
+                f"| Forecast: {forecast_temp}F | In bucket: {temp_in_bucket} "
+                f"| Prob: {noaa_prob:.0%} vs Market: {market_price:.0%} | Edge: {edge:.1%}"
             )
+
+            # Only consider buckets where the forecast actually lands
+            if not temp_in_bucket:
+                continue
+
+            # ── Hard constraint: minimum shares check ──
+            if market_price > 0 and self.config.min_shares_per_order * market_price > self.config.max_position_usd:
+                logger.debug(f"  Skip: min shares ({self.config.min_shares_per_order}) * price ({market_price:.2f}) > position size")
+                continue
 
             # Determine action
             signal = self._evaluate_signal(bucket, noaa_prob, market_price, edge, forecast_temp)
@@ -248,21 +261,25 @@ class WeatherScanner:
         forecast_temp: float,
     ) -> Optional[TradeSignal]:
         """
-        Decide if a bucket represents a trading opportunity.
-        Returns a TradeSignal or None if no opportunity.
-        """
-        # ── BUY signal: market underpricing a likely outcome ──
-        if (
-            market_price < self.config.entry_threshold
-            and edge >= self.config.min_edge
-            and noaa_prob > 0.5
-        ):
-            confidence = "HIGH" if edge > 0.40 else "MEDIUM" if edge > 0.25 else "LOW"
+        Simmer-style signal evaluation.
 
-            # Smart sizing: smaller of (% of balance) and (max position)
-            size = min(
-                self.config.max_position_usd,
-                self.config.max_total_exposure * self.config.balance_pct_per_trade,
+        BUY: forecast lands in this bucket AND price < entry_threshold (15¢).
+             No Gaussian probability filter, no min_edge requirement.
+             Logic: "NOAA says X, bucket contains X, price is cheap → buy."
+
+        SELL: price >= exit_threshold (45¢) on a bucket we hold.
+        """
+        # ── BUY signal: matching bucket priced below entry threshold ──
+        if market_price < self.config.entry_threshold and noaa_prob > 0:
+            confidence = "HIGH" if edge > 0.60 else "MEDIUM" if edge > 0.40 else "LOW"
+
+            # Smart sizing: min(balance * 5%, max_position), floor of $1.00
+            size = max(
+                self.config.min_position_usd,
+                min(
+                    self.config.max_position_usd,
+                    self.config.max_total_exposure * self.config.balance_pct_per_trade,
+                ),
             )
 
             return TradeSignal(
@@ -275,15 +292,15 @@ class WeatherScanner:
                 action="BUY",
                 size_usd=size,
                 reasoning=(
-                    f"NOAA forecasts {forecast_temp}°F for {bucket.city} on {bucket.date}. "
-                    f"Bucket [{bucket.bucket_low_f}-{bucket.bucket_high_f}°F] has "
-                    f"{noaa_prob:.0%} estimated probability but market prices at "
-                    f"{market_price:.0%}. Edge: {edge:.0%}."
+                    f"Forecast {forecast_temp}°F for {bucket.city} on {bucket.date} "
+                    f"falls in bucket [{bucket.bucket_low_f}-{bucket.bucket_high_f}°F]. "
+                    f"Bucket worth ~{noaa_prob:.0%} but priced at {market_price:.0%}. "
+                    f"Edge: {edge:.0%}."
                 ),
             )
 
-        # ── SELL signal: market overpricing — we hold a position ──
-        if market_price > self.config.exit_threshold and noaa_prob < market_price * 0.7:
+        # ── SELL signal: price >= exit threshold ──
+        if market_price >= self.config.exit_threshold:
             return TradeSignal(
                 bucket=bucket,
                 noaa_probability=noaa_prob,
@@ -294,8 +311,8 @@ class WeatherScanner:
                 action="SELL",
                 size_usd=0,  # Sell entire position
                 reasoning=(
-                    f"Market price {market_price:.0%} significantly exceeds "
-                    f"NOAA-implied probability {noaa_prob:.0%}. Exit signal."
+                    f"Market price {market_price:.0%} at/above exit threshold "
+                    f"{self.config.exit_threshold:.0%}. Exit signal."
                 ),
             )
 

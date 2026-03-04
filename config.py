@@ -40,7 +40,7 @@ class TradingConfig:
     """Bot trading parameters — tune these to your risk appetite."""
 
     # ── Entry / Exit (Simmer-style) ──
-    entry_threshold: float = 0.15      # Only buy buckets priced below 15¢
+    entry_threshold: float = 0.25      # Only buy buckets priced below 25¢
     exit_threshold: float = 0.45       # Sell when market corrects above 45¢
     noaa_flat_probability: float = 0.85  # Flat probability assigned to the matching bucket
 

@@ -269,7 +269,7 @@ Examples:
         help="Comma-separated city list (e.g., NYC,Chicago,Miami)",
     )
     parser.add_argument("--max-position", type=float, default=2.0, help="Max $ per position")
-    parser.add_argument("--entry-threshold", type=float, default=0.15, help="Entry threshold (0-1)")
+    parser.add_argument("--entry-threshold", type=float, default=0.25, help="Entry threshold (0-1)")
     parser.add_argument("--exit-threshold", type=float, default=0.45, help="Exit threshold (0-1)")
     parser.add_argument("--noaa-prob", type=float, default=0.85, help="Flat probability for matching bucket (0-1)")
 

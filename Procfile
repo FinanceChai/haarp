@@ -1,1 +1,1 @@
-worker: python main.py scan --verbose
+worker: python main.py trade --verbose

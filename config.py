@@ -39,10 +39,10 @@ US_CITIES = {"NYC", "Chicago", "Seattle", "Atlanta", "Dallas", "Miami"}
 class TradingConfig:
     """Bot trading parameters — tune these to your risk appetite."""
 
-    # ── Entry / Exit (Simmer-style) ──
+    # ── Entry / Exit (Gaussian + mispricing ratio) ──
     entry_threshold: float = 0.25      # Only buy buckets priced below 25¢
     exit_threshold: float = 0.45       # Sell when market corrects above 45¢
-    noaa_flat_probability: float = 0.85  # Flat probability assigned to the matching bucket
+    min_mispricing_ratio: float = 2.0  # Buy when noaa_prob / market_price >= this ratio
 
     # ── Polymarket minimums ──
     min_shares_per_order: float = 5.0  # Polymarket requires at least 5 shares

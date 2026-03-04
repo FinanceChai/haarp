@@ -209,10 +209,10 @@ class WeatherBot:
     def _config_summary(self) -> str:
         c = self.config
         return (
-            f"Strategy:         Simmer (point forecast → bucket match)\n"
+            f"Strategy:         Gaussian + mispricing ratio\n"
             f"Entry threshold:  {c.entry_threshold:.0%}\n"
             f"Exit threshold:   {c.exit_threshold:.0%}\n"
-            f"Flat NOAA prob:   {c.noaa_flat_probability:.0%}\n"
+            f"Min ratio:        {c.min_mispricing_ratio:.1f}x\n"
             f"Min shares/order: {c.min_shares_per_order}\n"
             f"Max position:     ${c.max_position_usd:.2f}\n"
             f"Max exposure:     ${c.max_total_exposure:.2f}\n"
@@ -271,7 +271,7 @@ Examples:
     parser.add_argument("--max-position", type=float, default=2.0, help="Max $ per position")
     parser.add_argument("--entry-threshold", type=float, default=0.25, help="Entry threshold (0-1)")
     parser.add_argument("--exit-threshold", type=float, default=0.45, help="Exit threshold (0-1)")
-    parser.add_argument("--noaa-prob", type=float, default=0.85, help="Flat probability for matching bucket (0-1)")
+    parser.add_argument("--min-ratio", type=float, default=2.0, help="Minimum mispricing ratio (noaa_prob / market_price)")
 
     args = parser.parse_args()
 
@@ -284,7 +284,7 @@ Examples:
         max_position_usd=args.max_position,
         entry_threshold=args.entry_threshold,
         exit_threshold=args.exit_threshold,
-        noaa_flat_probability=args.noaa_prob,
+        min_mispricing_ratio=args.min_ratio,
     )
     if args.cities:
         config.locations = [c.strip() for c in args.cities.split(",")]

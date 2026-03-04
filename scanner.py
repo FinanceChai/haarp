@@ -1,16 +1,17 @@
 """
-Weather Market Scanner (Simmer-style)
-======================================
+Weather Market Scanner (Gaussian + mispricing ratio)
+=====================================================
 The core engine that:
-  1. Fetches NOAA/Open-Meteo point forecasts for configured cities
+  1. Fetches NOAA/Open-Meteo forecasts for configured cities
   2. Fetches Polymarket weather bucket prices
-  3. Matches point forecast to the containing bucket
-  4. Assigns flat probability (0.85) to the matching bucket
-  5. Buys if matching bucket is priced below entry threshold
-  6. Applies safeguards (slippage, flip-flop, time decay, Polymarket minimums)
+  3. Estimates per-bucket probability via Gaussian model
+  4. Buys when mispricing ratio (noaa_prob / market_price) >= threshold
+  5. Applies safeguards (slippage, flip-flop, time decay, Polymarket minimums)
 
-Key difference from Gaussian approach: no per-bucket probability math.
-Just: "NOAA says X°F → find bucket containing X → if price < 15¢, buy it."
+Uses Gaussian probability spread across ALL buckets (not just the matching one),
+but replaces the old three-way filter (noaa_prob > 50% AND edge >= 20%) with a
+relative mispricing ratio. This works with narrow 2°F buckets where no single
+bucket ever reaches 50% probability.
 """
 
 import logging
@@ -154,8 +155,7 @@ class WeatherScanner:
                 scan_duration_ms=(_time.time() - start) * 1000,
             )
 
-        # ── Step 3: Match point forecast to bucket (Simmer-style) ──
-        # No Gaussian distribution — just find the bucket containing the forecast temp
+        # ── Step 3: Gaussian probability + mispricing ratio ──
         for city, flist in forecasts.items():
             logger.debug(f"  Forecast dates for {city}: {[f.date for f in flist]}")
 
@@ -196,23 +196,22 @@ class WeatherScanner:
                 else matching_forecast.low_f
             )
 
-            # Simmer-style: does the point forecast fall in this bucket?
-            temp_in_bucket = bucket.bucket_low_f <= forecast_temp <= bucket.bucket_high_f
-
-            # Flat probability: 0.85 if forecast is in bucket, 0.0 otherwise
-            noaa_prob = self.config.noaa_flat_probability if temp_in_bucket else 0.0
+            # Gaussian probability estimation across the bucket
+            noaa_prob = NOAAClient.estimate_bucket_probability(
+                forecast_temp_f=forecast_temp,
+                hourly_temps_f=matching_forecast.hourly_temps_f,
+                bucket_low_f=bucket.bucket_low_f,
+                bucket_high_f=bucket.bucket_high_f,
+            )
 
             edge = noaa_prob - market_price
+            ratio = noaa_prob / market_price if market_price > 0 else 0.0
 
             logger.debug(
                 f"  {bucket.city} {bucket.date} [{bucket.bucket_low_f}-{bucket.bucket_high_f}F] "
-                f"| Forecast: {forecast_temp}F | In bucket: {temp_in_bucket} "
-                f"| Prob: {noaa_prob:.0%} vs Market: {market_price:.0%} | Edge: {edge:.1%}"
+                f"| Forecast: {forecast_temp}F | NOAA: {noaa_prob:.1%} vs Market: {market_price:.1%} "
+                f"| Edge: {edge:.1%} | Ratio: {ratio:.1f}x"
             )
-
-            # Only consider buckets where the forecast actually lands
-            if not temp_in_bucket:
-                continue
 
             # ── Hard constraint: minimum shares check ──
             if market_price > 0 and self.config.min_shares_per_order * market_price > self.config.max_position_usd:
@@ -220,7 +219,7 @@ class WeatherScanner:
                 continue
 
             # Determine action
-            signal = self._evaluate_signal(bucket, noaa_prob, market_price, edge, forecast_temp)
+            signal = self._evaluate_signal(bucket, noaa_prob, market_price, edge, forecast_temp, ratio)
             if signal is None:
                 continue
 
@@ -259,19 +258,23 @@ class WeatherScanner:
         market_price: float,
         edge: float,
         forecast_temp: float,
+        ratio: float,
     ) -> Optional[TradeSignal]:
         """
-        Simmer-style signal evaluation.
+        Gaussian + mispricing ratio evaluation.
 
-        BUY: forecast lands in this bucket AND price < entry_threshold (15¢).
-             No Gaussian probability filter, no min_edge requirement.
-             Logic: "NOAA says X, bucket contains X, price is cheap → buy."
+        BUY: price < entry_threshold (25¢) AND mispricing ratio >= 2.0x.
+             Example: Gaussian says 20% prob, market prices at 8% → ratio 2.5x → buy.
+             Works with narrow 2°F buckets where no single bucket hits 50%.
 
         SELL: price >= exit_threshold (45¢) on a bucket we hold.
         """
-        # ── BUY signal: matching bucket priced below entry threshold ──
-        if market_price < self.config.entry_threshold and noaa_prob > 0:
-            confidence = "HIGH" if edge > 0.60 else "MEDIUM" if edge > 0.40 else "LOW"
+        # ── BUY signal: cheap bucket with significant mispricing ratio ──
+        if (
+            market_price < self.config.entry_threshold
+            and ratio >= self.config.min_mispricing_ratio
+        ):
+            confidence = "HIGH" if ratio > 4.0 else "MEDIUM" if ratio > 2.5 else "LOW"
 
             # Smart sizing: min(balance * 5%, max_position), floor of $1.00
             size = max(
@@ -292,10 +295,10 @@ class WeatherScanner:
                 action="BUY",
                 size_usd=size,
                 reasoning=(
-                    f"Forecast {forecast_temp}°F for {bucket.city} on {bucket.date} "
-                    f"falls in bucket [{bucket.bucket_low_f}-{bucket.bucket_high_f}°F]. "
-                    f"Bucket worth ~{noaa_prob:.0%} but priced at {market_price:.0%}. "
-                    f"Edge: {edge:.0%}."
+                    f"Forecast {forecast_temp}°F for {bucket.city} on {bucket.date}. "
+                    f"Bucket [{bucket.bucket_low_f}-{bucket.bucket_high_f}°F] has "
+                    f"{noaa_prob:.0%} Gaussian probability but priced at {market_price:.0%}. "
+                    f"Mispricing ratio: {ratio:.1f}x. Edge: {edge:.0%}."
                 ),
             )
 

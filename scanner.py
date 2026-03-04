@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 from config import TradingConfig, US_CITIES
-from noaa_client import DailyForecast
+from noaa_client import NOAAClient, DailyForecast
 from open_meteo_client import OpenMeteoClient
 from polymarket_client import PolymarketClient, WeatherBucket, TradeSignal
 

@@ -339,8 +339,10 @@ class WeatherScanner:
             except (ValueError, TypeError):
                 pass
 
-        # Check slippage (only for BUY signals)
-        if signal.action == "BUY" and bucket.token_id:
+        # Check slippage (only for BUY signals on non-cheap buckets)
+        # Skip for buckets < 5¢ — order books are too thin for meaningful
+        # slippage estimates; the liquidity check below handles protection.
+        if signal.action == "BUY" and bucket.token_id and signal.market_price >= 0.05:
             slippage = self.poly.estimate_slippage(
                 bucket.token_id, "BUY", signal.size_usd
             )

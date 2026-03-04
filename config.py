@@ -1,0 +1,74 @@
+"""
+Polymarket Weather Trading Bot — Configuration
+================================================
+All configurable parameters in one place.
+"""
+
+from dataclasses import dataclass, field
+from typing import Dict, Tuple
+
+# ─────────────────────────────────────────────
+# CITY COORDINATES (lat, lon) for NOAA lookups
+# ─────────────────────────────────────────────
+CITY_COORDS: Dict[str, Tuple[float, float]] = {
+    "NYC":     (40.7128, -74.0060),
+    "Chicago": (41.8781, -87.6298),
+    "Seattle": (47.6062, -122.3321),
+    "Atlanta": (33.7490, -84.3880),
+    "Dallas":  (32.7767, -96.7970),
+    "Miami":   (25.7617, -80.1918),
+}
+
+
+@dataclass
+class TradingConfig:
+    """Bot trading parameters — tune these to your risk appetite."""
+
+    # ── Entry / Exit ──
+    entry_threshold: float = 0.15      # Only buy buckets priced below this (e.g., 0.15 = 15¢)
+    exit_threshold: float = 0.45       # Sell when market corrects above this
+    min_edge: float = 0.20             # Minimum NOAA_prob − market_price spread to act on
+
+    # ── Position sizing ──
+    max_position_usd: float = 2.00     # Max $ per single position
+    max_total_exposure: float = 100.00  # Max aggregate exposure across all positions
+    balance_pct_per_trade: float = 0.05 # Smart sizing: use 5% of available balance per trade
+
+    # ── Risk controls ──
+    max_trades_per_scan: int = 5       # Cap trades per 2-min cycle
+    min_hours_to_resolution: int = 2   # Skip markets resolving within this window
+    max_slippage_pct: float = 0.15     # Abort if estimated slippage exceeds 15%
+    flip_flop_window_hours: int = 6    # Detect direction reversals within this window
+    max_flip_flops: int = 2            # Max allowed direction changes before blocking
+
+    # ── Scan settings ──
+    scan_interval_seconds: int = 120   # How often to scan (2 minutes)
+    locations: list = field(default_factory=lambda: list(CITY_COORDS.keys()))
+
+    # ── NOAA confidence weighting ──
+    # NOAA doesn't give explicit confidence %, so we derive it from
+    # forecast spread. These thresholds map spread → confidence bucket.
+    high_confidence_spread_f: float = 2.0   # ±2°F → ~90% confidence
+    med_confidence_spread_f: float = 4.0    # ±4°F → ~75% confidence
+    low_confidence_spread_f: float = 6.0    # ±6°F → ~60% confidence
+
+    # ── Polymarket API ──
+    clob_host: str = "https://clob.polymarket.com"
+    gamma_host: str = "https://gamma-api.polymarket.com"
+    chain_id: int = 137  # Polygon
+
+    # ── Logging ──
+    log_file: str = "weather_bot.log"
+    verbose: bool = True
+
+
+@dataclass
+class Secrets:
+    """
+    Sensitive credentials — load from environment variables.
+    NEVER commit these to source control.
+    """
+    polymarket_private_key: str = ""
+    polymarket_funder_address: str = ""
+    telegram_bot_token: str = ""       # Optional: for notifications
+    telegram_chat_id: str = ""         # Optional: for notifications

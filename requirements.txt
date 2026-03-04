@@ -1,0 +1,10 @@
+# Core dependencies
+requests>=2.31.0
+
+# Polymarket trading (only needed if executing real trades)
+# py-clob-client>=0.1.0
+
+# Optional: load .env files
+python-dotenv>=1.0.0
+
+# Optional: Telegram notifications (uses requests, no extra dep)

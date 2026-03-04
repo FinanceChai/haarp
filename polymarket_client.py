@@ -396,20 +396,24 @@ class PolymarketClient:
     def estimate_slippage(self, token_id: str, side: str, size_usd: float) -> float:
         """
         Estimate slippage for a given order size by walking the order book.
-        Returns estimated fill price vs midpoint as a fraction.
+        Returns estimated slippage as a fraction (0.0–1.0).
+
+        For cheap buckets (< 10¢), uses absolute price difference instead of
+        relative % to avoid dividing by a tiny midpoint and getting nonsensical
+        values like 5000% slippage on a 1¢ price move.
         """
         book = self.get_order_book(token_id)
         if not book:
-            return 1.0  # Max slippage — can't estimate
+            return 0.0  # No book data — let other safeguards (liquidity) handle it
 
         mid = self.get_midpoint(token_id)
         if not mid or mid == 0:
-            return 1.0
+            return 0.0
 
         # Walk the relevant side of the book
         orders = book.get("asks" if side == "BUY" else "bids", [])
         if not orders:
-            return 1.0
+            return 0.0
 
         remaining = size_usd
         weighted_price = 0.0
@@ -429,11 +433,21 @@ class PolymarketClient:
                 break
 
         if total_filled == 0:
-            return 1.0
+            return 0.0
 
         avg_fill = weighted_price / total_filled
-        slippage = abs(avg_fill - mid) / mid
-        return round(slippage, 4)
+        abs_slippage = abs(avg_fill - mid)
+
+        # For cheap buckets (< 10¢), use absolute slippage in cents.
+        # A 2¢ move on a 3¢ token is "67% relative" but only $0.02 absolute —
+        # totally fine for a $2 position.
+        if mid < 0.10:
+            # Treat anything under 5¢ absolute slippage as acceptable
+            slippage = abs_slippage / 0.10  # Normalize: 5¢ move = 50% slippage
+        else:
+            slippage = abs_slippage / mid
+
+        return round(min(slippage, 1.0), 4)
 
 
 class PolymarketTrader:

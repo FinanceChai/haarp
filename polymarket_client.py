@@ -167,12 +167,24 @@ class PolymarketClient:
 
         # Extract city
         city_patterns = {
+            # US
             "NYC": r"\bNYC\b|New York",
             "Chicago": r"\bChicago\b",
             "Seattle": r"\bSeattle\b",
             "Atlanta": r"\bAtlanta\b",
             "Dallas": r"\bDallas\b",
             "Miami": r"\bMiami\b",
+            # International
+            "Ankara": r"\bAnkara\b",
+            "Buenos Aires": r"\bBuenos\s+Aires\b",
+            "London": r"\bLondon\b",
+            "Lucknow": r"\bLucknow\b",
+            "Munich": r"\bMunich\b",
+            "Paris": r"\bParis\b",
+            "Sao Paulo": r"\bSa[oã]o?\s*Paulo\b",
+            "Seoul": r"\bSeoul\b",
+            "Toronto": r"\bToronto\b",
+            "Wellington": r"\bWellington\b",
         }
         for city, pattern in city_patterns.items():
             if re.search(pattern, question, re.IGNORECASE):
@@ -207,6 +219,34 @@ class PolymarketClient:
                     result["bucket_low_f"] = float(groups[0]) - 20
                     result["bucket_high_f"] = float(groups[0])
                 break
+
+        if "bucket_low_f" not in result:
+            # Try Celsius patterns for international markets
+            celsius_patterns = [
+                r"(\d+)\s*[-–]\s*(\d+)\s*°?\s*C",
+                r"(\d+)\s*°?\s*C?\s*to\s*(\d+)\s*°?\s*C",
+                r"above\s+(\d+)\s*°?\s*C",
+                r"below\s+(\d+)\s*°?\s*C",
+                r"over\s+(\d+)\s*°?\s*C",
+                r"under\s+(\d+)\s*°?\s*C",
+            ]
+            for pattern in celsius_patterns:
+                match = re.search(pattern, question, re.IGNORECASE)
+                if match:
+                    groups = match.groups()
+                    if len(groups) == 2:
+                        low_c, high_c = float(groups[0]), float(groups[1])
+                    elif "above" in pattern or "over" in pattern:
+                        low_c = float(groups[0])
+                        high_c = low_c + 11.1  # ~20°F open-ended
+                    elif "below" in pattern or "under" in pattern:
+                        high_c = float(groups[0])
+                        low_c = high_c - 11.1
+                    else:
+                        continue
+                    result["bucket_low_f"] = round(low_c * 9 / 5 + 32, 1)
+                    result["bucket_high_f"] = round(high_c * 9 / 5 + 32, 1)
+                    break
 
         if "bucket_low_f" not in result:
             return None

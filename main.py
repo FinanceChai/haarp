@@ -55,9 +55,10 @@ def setup_logging(verbose: bool = False, log_file: str = "weather_bot.log"):
     level = logging.DEBUG if verbose else logging.INFO
     fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 
-    console = logging.StreamHandler(
-        open(sys.stdout.fileno(), mode="w", encoding="utf-8", closefd=False)
-    )
+    # Wrap stdout in UTF-8 for Windows (handles emoji in both logging and print)
+    sys.stdout = open(sys.stdout.fileno(), mode="w", encoding="utf-8", closefd=False)
+
+    console = logging.StreamHandler(sys.stdout)
     handlers = [
         console,
         logging.FileHandler(log_file, mode="a", encoding="utf-8"),

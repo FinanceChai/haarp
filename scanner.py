@@ -16,8 +16,9 @@ from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
-from config import TradingConfig
+from config import TradingConfig, US_CITIES
 from noaa_client import NOAAClient, DailyForecast
+from open_meteo_client import OpenMeteoClient
 from polymarket_client import PolymarketClient, WeatherBucket, TradeSignal
 
 logger = logging.getLogger(__name__)
@@ -82,6 +83,7 @@ class WeatherScanner:
     def __init__(self, config: TradingConfig):
         self.config = config
         self.noaa = NOAAClient()
+        self.open_meteo = OpenMeteoClient()
         self.poly = PolymarketClient(config)
         self.flip_tracker = FlipFlopTracker(
             window_hours=config.flip_flop_window_hours,
@@ -107,16 +109,20 @@ class WeatherScanner:
         opportunities = []
         blocked = []
 
-        # ── Step 1: Fetch NOAA forecasts ──
+        # ── Step 1: Fetch forecasts (NOAA for US, Open-Meteo for international) ──
         forecasts: Dict[str, List[DailyForecast]] = {}
         for city in self.config.locations:
             try:
-                daily = self.noaa.get_daily_forecasts(city, days_ahead=3)
+                if city in US_CITIES:
+                    daily = self.noaa.get_daily_forecasts(city, days_ahead=3)
+                else:
+                    daily = self.open_meteo.get_daily_forecasts(city, days_ahead=3)
                 if daily:
                     forecasts[city] = daily
             except Exception as e:
-                errors.append(f"NOAA error for {city}: {e}")
-                logger.error(f"NOAA fetch failed for {city}: {e}")
+                source = "NOAA" if city in US_CITIES else "Open-Meteo"
+                errors.append(f"{source} error for {city}: {e}")
+                logger.error(f"{source} fetch failed for {city}: {e}")
 
         if not forecasts:
             return ScanResult(
@@ -126,7 +132,7 @@ class WeatherScanner:
                 buckets_analyzed=0,
                 opportunities=[],
                 blocked_signals=[],
-                errors=errors or ["No NOAA data available for any city"],
+                errors=errors or ["No forecast data available for any city"],
                 scan_duration_ms=(_time.time() - start) * 1000,
             )
 

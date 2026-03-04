@@ -8,16 +8,31 @@ from dataclasses import dataclass, field
 from typing import Dict, Tuple
 
 # ─────────────────────────────────────────────
-# CITY COORDINATES (lat, lon) for NOAA lookups
+# CITY COORDINATES (lat, lon) for weather lookups
 # ─────────────────────────────────────────────
 CITY_COORDS: Dict[str, Tuple[float, float]] = {
-    "NYC":     (40.7128, -74.0060),
-    "Chicago": (41.8781, -87.6298),
-    "Seattle": (47.6062, -122.3321),
-    "Atlanta": (33.7490, -84.3880),
-    "Dallas":  (32.7767, -96.7970),
-    "Miami":   (25.7617, -80.1918),
+    # US cities (NOAA)
+    "NYC":           (40.7128, -74.0060),
+    "Chicago":       (41.8781, -87.6298),
+    "Seattle":       (47.6062, -122.3321),
+    "Atlanta":       (33.7490, -84.3880),
+    "Dallas":        (32.7767, -96.7970),
+    "Miami":         (25.7617, -80.1918),
+    # International cities (Open-Meteo)
+    "Ankara":        (39.9334,  32.8597),
+    "Buenos Aires":  (-34.6037, -58.3816),
+    "London":        (51.5074,  -0.1278),
+    "Lucknow":       (26.8467,  80.9462),
+    "Munich":        (48.1351,  11.5820),
+    "Paris":         (48.8566,   2.3522),
+    "Sao Paulo":     (-23.5505, -46.6333),
+    "Seoul":         (37.5665, 126.9780),
+    "Toronto":       (43.6532, -79.3832),
+    "Wellington":    (-41.2924, 174.7787),
 }
+
+# Cities served by NOAA (US-only). Everything else uses Open-Meteo.
+US_CITIES = {"NYC", "Chicago", "Seattle", "Atlanta", "Dallas", "Miami"}
 
 
 @dataclass
